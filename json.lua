@@ -342,6 +342,69 @@ function JsonReader:ReadNumber()
 	end
 end
 
+local function unicode_codepoint_as_utf8(codepoint)
+   --
+   -- codepoint is a number
+   --
+   if codepoint <= 127 then
+      return string.char(codepoint)
+
+   elseif codepoint <= 2047 then
+      --
+      -- 110yyyxx 10xxxxxx         <-- useful notation from http://en.wikipedia.org/wiki/Utf8
+      --
+      local highpart = math.floor(codepoint / 0x40)
+      local lowpart  = codepoint - (0x40 * highpart)
+      return string.char(0xC0 + highpart,
+                         0x80 + lowpart)
+
+   elseif codepoint <= 65535 then
+      --
+      -- 1110yyyy 10yyyyxx 10xxxxxx
+      --
+      local highpart  = math.floor(codepoint / 0x1000)
+      local remainder = codepoint - 0x1000 * highpart
+      local midpart   = math.floor(remainder / 0x40)
+      local lowpart   = remainder - 0x40 * midpart
+
+      highpart = 0xE0 + highpart
+      midpart  = 0x80 + midpart
+      lowpart  = 0x80 + lowpart
+
+      --
+      -- Check for an invalid character (thanks Andy R. at Adobe).
+      -- See table 3.7, page 93, in http://www.unicode.org/versions/Unicode5.2.0/ch03.pdf#G28070
+      --
+      if ( highpart == 0xE0 and midpart < 0xA0 ) or
+         ( highpart == 0xED and midpart > 0x9F ) or
+         ( highpart == 0xF0 and midpart < 0x90 ) or
+         ( highpart == 0xF4 and midpart > 0x8F )
+      then
+         return "?"
+      else
+         return string.char(highpart,
+                            midpart,
+                            lowpart)
+      end
+
+   else
+      --
+      -- 11110zzz 10zzyyyy 10yyyyxx 10xxxxxx
+      --
+      local highpart  = math.floor(codepoint / 0x40000)
+      local remainder = codepoint - 0x40000 * highpart
+      local midA      = math.floor(remainder / 0x1000)
+      remainder       = remainder - 0x1000 * midA
+      local midB      = math.floor(remainder / 0x40)
+      local lowpart   = remainder - 0x40 * midB
+
+      return string.char(0xF0 + highpart,
+                         0x80 + midA,
+                         0x80 + midB,
+                         0x80 + lowpart)
+   end
+end
+
 function JsonReader:ReadString()
 	local result = ""
 	assert(self:Next() == '"')
@@ -357,12 +420,14 @@ function JsonReader:ReadString()
 	end
         assert(self:Next() == '"')
 	local fromunicode = function(m)
-		return string.char(tonumber(m, 16))
+		return unicode_codepoint_as_utf8(tonumber(m, 16))
 	end
+	
 	return string.gsub(
 		result, 
-		"u%x%x(%x%x)", 
+		"\u%x%x(%x%x)", 
 		fromunicode)
+	
 end
 
 function JsonReader:ReadComment()
